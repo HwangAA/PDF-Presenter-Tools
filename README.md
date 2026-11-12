@@ -1,12 +1,14 @@
-# PDF Presenter Tools 2.4
+# PDF Presenter Tools 2.5
 
 Present a PDF on a second monitor while keeping the current page, next page, and remaining page count in view on your own screen. Opening a PDF does not start the presentation. Choose the audience monitor and select **Start Presentation (발표 시작)** when you are ready.
 
+The interface supports Korean, English, Japanese and Simplified Chinese. It starts in the Windows display language (English fallback). Language changes last only for the current session. Select **ver 2.5** to open this repository.
+
 ### Download and run on Windows
 
-Open the [v2.4 release](https://github.com/HwangAA/PDF-Presenter-Tools/releases/tag/v2.4) and download **`PDFPresenter-2.4-Windows-x64.zip`** from **Assets**. Unzip it and run `PDFPresenter.exe`. This portable build runs on Windows 10/11 x64 and needs no Python installation or first-launch download.
+Open the [v2.5 release](https://github.com/HwangAA/PDF-Presenter-Tools/releases/tag/v2.5) and download **`PDFPresenter-2.5-Windows-x64.zip`** from **Assets**. Unzip it and run `PDFPresenter.exe`. This portable build runs on Windows 10/11 x64 and needs no Python installation or first-launch download.
 
-To rebuild the published EXE, use `PDFPresenter-2.4-Corresponding-Source.zip` from the same release. It includes the application source, third-party source and patches, build recipes, and rebuild instructions. Use `SHA256SUMS.txt` to verify either ZIP.
+To rebuild the published EXE, use `PDFPresenter-2.5-Corresponding-Source.zip` from the same release. It includes the application source, third-party source and patches, build recipes, and rebuild instructions. Use `SHA256SUMS.txt` to verify either ZIP.
 
 ### Run from source
 
@@ -35,15 +37,17 @@ The project's own code, build configuration, documentation, and app icon are lic
 
 ---
 
-## PDF 발표자 도구 2.4
+## PDF 발표자 도구 2.5
 
 Windows에서 PDF를 발표할 때 쓰는 도구입니다. 제어 창에는 현재 페이지와 다음 페이지를, 발표를 시작하면 청중 모니터에는 현재 페이지만 표시합니다. PDF를 열어도 발표가 자동으로 시작되지 않습니다.
 
+한국어·영어·일본어·중국어(간체)를 지원합니다. 시작 시 Windows 표시 언어를 따르며 미지원 언어는 영어로 표시됩니다. 언어 변경은 현재 실행에만 적용되고, **ver 2.5**를 누르면 이 저장소가 열립니다.
+
 ### 다운로드 및 실행
 
-[Windows용 v2.4 릴리스](https://github.com/HwangAA/PDF-Presenter-Tools/releases/tag/v2.4)의 **Assets**에서 `PDFPresenter-2.4-Windows-x64.zip`을 받아 압축을 푼 뒤 `PDFPresenter.exe`를 실행하세요. Windows 10/11 x64용 휴대 버전으로, Python 설치나 첫 실행 시 다운로드가 필요하지 않습니다.
+[Windows용 v2.5 릴리스](https://github.com/HwangAA/PDF-Presenter-Tools/releases/tag/v2.5)의 **Assets**에서 `PDFPresenter-2.5-Windows-x64.zip`을 받아 압축을 푼 뒤 `PDFPresenter.exe`를 실행하세요. Windows 10/11 x64용 휴대 버전으로, Python 설치나 첫 실행 시 다운로드가 필요하지 않습니다.
 
-같은 릴리스의 `PDFPresenter-2.4-Corresponding-Source.zip`에는 배포된 EXE의 앱 소스, 외부 라이브러리 소스와 패치, 재빌드 안내가 들어 있습니다. 두 ZIP의 무결성은 `SHA256SUMS.txt`로 확인할 수 있습니다.
+같은 릴리스의 `PDFPresenter-2.5-Corresponding-Source.zip`에는 배포된 EXE의 앱 소스, 외부 라이브러리 소스와 패치, 재빌드 안내가 들어 있습니다. 두 ZIP의 무결성은 `SHA256SUMS.txt`로 확인할 수 있습니다.
 
 ### 소스에서 실행하기
 

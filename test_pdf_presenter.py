@@ -22,12 +22,10 @@ class PresenterTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
         cls.app.setQuitOnLastWindowClosed(False)
-        from qt_material import apply_stylesheet
         font_family = presenter.ui_font_family()
         cls.app.setFont(QFont(font_family, 12))
-        apply_stylesheet(cls.app, theme='dark_teal.xml',
-                         extra={'font_family': font_family, 'font_size': '16px'})
         cls.temp = tempfile.TemporaryDirectory()
+        presenter.apply_session_theme(cls.app, font_family, Path(cls.temp.name) / 'theme')
         cls.path = str(Path(cls.temp.name) / 'slides.pdf')
         with fitz.open() as doc:
             for number in range(3):
@@ -46,6 +44,8 @@ class PresenterTests(unittest.TestCase):
         presenter._bundled_font_ids.clear()
 
     def setUp(self):
+        self.system_ui = patch.object(presenter, "system_language", return_value="ko").start()
+        self.addCleanup(patch.stopall)
         self.window = presenter.PresenterWindow()
         self.window.show()
         self.app.processEvents()
@@ -71,6 +71,86 @@ class PresenterTests(unittest.TestCase):
         self.window.load_pdf(self.path)
         self.wait_for(lambda: not self.window.navigation_pending and self.window.pdf_doc is not None)
         self.wait_for(lambda: not self.window.jobs)
+
+    def test_live_language_selection_preserves_presentation_and_edit(self):
+        self.load()
+        w = self.window
+        w.next_page()
+        w.start_presentation()
+        worker, document, pixmap = w.worker, w.pdf_doc, w.cached_curr_pixmap.cacheKey()
+        for code, name, stop in [('en', 'Open PDF', 'Stop presentation'), ('ja', 'PDF を開く', '発表停止'),
+                                 ('zh_CN', '打开 PDF', '停止演示'), ('ko', 'PDF 파일 열기', '발표 정지')]:
+            w.language_actions[code].trigger()
+            self.assertEqual(w.btn_open.text(), name)
+            self.assertEqual(w.btn_presentation.text(), stop)
+            self.assertEqual(w.current_page, 1)
+            self.assertTrue(w.presentation_active)
+            self.assertTrue(w.audience_window.isVisible())
+            self.assertIs(w.worker, worker)
+            self.assertIs(w.pdf_doc, document)
+            self.assertEqual(w.cached_curr_pixmap.cacheKey(), pixmap)
+            self.assertEqual([k for k, a in w.language_actions.items() if a.isChecked()], [code])
+        w.stop_presentation()
+        w.edit_page.setFocus()
+        w.edit_page.setText('3')
+        w.select_language('en')
+        self.assertEqual(w.edit_page.text(), '3')
+
+    def test_language_is_session_only_and_menu_has_four_choices(self):
+        from PyQt5 import sip
+        w = self.window
+        self.assertEqual(set(w.language_actions), {'ko', 'en', 'ja', 'zh_CN'})
+        self.assertEqual(len(w.language_menu.actions()), 4)
+        w.language_actions['en'].trigger()
+        self.assertEqual(w.language, 'en')
+        for system in ('ko', 'ja', 'en'):
+            self.system_ui.return_value = system
+            new = presenter.PresenterWindow()
+            try:
+                self.assertEqual(new.language, system)
+                self.assertTrue(new.language_actions[system].isChecked())
+            finally:
+                new.close(); sip.delete(new.audience_window); sip.delete(new)
+
+    def test_windows_language_ids(self):
+        from presenter_i18n import language_from_langid
+        for value, expected in [(0x0412,'ko'),(0x0809,'en'),(0x0411,'ja'),(0x0804,'zh_CN'),
+                                (0x0404,'en'),(0x0c04,'en'),(0x1004,'zh_CN'),(0x040c,'en'),(0,'en')]:
+            self.assertEqual(language_from_langid(value), expected)
+
+    def test_language_button_shares_version_row(self):
+        w = self.window
+        w.resize(900, 640)
+        self.app.processEvents()
+        for language in w.language_actions:
+            w.select_language(language)
+            self.app.processEvents()
+            button = w.language_button.geometry()
+            version = w.version_label.geometry()
+            self.assertLessEqual(abs(button.center().y()-version.center().y()), 2)
+            self.assertLessEqual(version.left()-button.right(), 8)
+            self.assertLess(button.right(), version.left())
+
+    def test_translates_pending_preview_and_errors_without_translating_user_text(self):
+        w = self.window
+        w.set_note('{page}페이지 준비 중 · {shown}페이지 표시 중', {'page': 4, 'shown': 2})
+        w.show_error('파일을 열 수 없습니다: {error}', error='비밀번호가 설정된 보안 PDF는 열 수 없습니다.')
+        w.select_language('en')
+        self.assertEqual(w.preview_note.text(), 'Preparing page 4 · Showing page 2')
+        self.assertIn('Password-protected', w.statusBar().currentMessage())
+        w.show_error('파일을 열 수 없습니다: {error}', error='C:/보고서/{demo}.pdf')
+        w.select_language('zh_CN')
+        self.assertEqual(w.statusBar().currentMessage(), '无法打开文件：C:/보고서/{demo}.pdf')
+
+    def test_translations_preserve_all_placeholder_names(self):
+        from presenter_i18n import CATALOG, LANGUAGES
+        from string import Formatter
+        def fields(value): return {f for _,f,_,_ in Formatter().parse(value) if f is not None}
+        for key, translations in CATALOG.items():
+            self.assertEqual(set(translations), set(LANGUAGES))
+            for text in translations.values():
+                self.assertTrue(text.strip())
+                self.assertEqual(fields(key), fields(text))
 
     def test_real_render_navigation_cache_and_last_page_style(self):
         self.load()
@@ -199,6 +279,40 @@ class PresenterTests(unittest.TestCase):
         image = QImage(320, 180, QImage.Format_RGB888)
         image.fill(Qt.red)
         return (image.bits().asstring(image.byteCount()), image.width(), image.height(), image.bytesPerLine())
+
+    def test_jump_then_left_uses_late_result_for_next_preview_only(self):
+        from PyQt5.QtTest import QTest
+        w = self.window
+        with tempfile.TemporaryDirectory() as td:
+            path = str(Path(td) / 'colored.pdf')
+            with fitz.open() as doc:
+                for number in range(1, 49):
+                    page = doc.new_page(width=128, height=96)
+                    page.draw_rect(page.rect, color=None, fill=(number * 5 / 255, 0, 0))
+                doc.save(path)
+            try:
+                for language in ('ko', 'en', 'ja', 'zh_CN', 'ko'):
+                    w.load_pdf(path)
+                    self.wait_for(lambda: not w.opening_pdf and not w.jobs)
+                    w.select_language(language)
+                    w.start_presentation()
+                    self.app.processEvents()
+                    QTest.mouseClick(w.edit_page, Qt.LeftButton)
+                    w.edit_page.selectAll()
+                    QTest.keyClicks(w.edit_page, '12')
+                    QTest.keyClick(w.edit_page, Qt.Key_Return)
+                    QTest.keyClick(w, Qt.Key_Left)
+                    self.wait_for(lambda: not w.jobs and not w.navigation_pending)
+                    self.assertEqual((w.current_page, w.displayed_preview_page), (10, 11))
+                    self.assertTrue(w.presentation_active)
+                    for pix, expected in [(w.cached_curr_pixmap, 55), (w.audience_window.current_pixmap, 55),
+                                          (w.next_view.pixmap(), 60)]:
+                        image = pix.toImage()
+                        self.assertAlmostEqual(image.pixelColor(image.width()//2, image.height()//2).red(), expected, delta=1)
+                    self.assertEqual(w.preview_note.text(), '')
+                    self.assertFalse(w.preview_overlay.isVisible())
+            finally:
+                w.close()
 
     def test_preview_is_promoted_without_duplicate_request(self):
         self.load()
@@ -851,7 +965,10 @@ class PresenterTests(unittest.TestCase):
         self.assertAlmostEqual(edit.focusGlow, level)
         edit.anim.setCurrentTime(edit.anim.duration())
         self.assertEqual(edit.focusGlow, 0.0)
-        self.assertEqual(self.window.version_label.text(), 'ver.2.4')
+        self.assertEqual(self.window.version_label.text(), 'ver 2.5')
+        with patch('presenter_ui.QDesktopServices.openUrl') as open_url:
+            self.window.version_label.click()
+            self.assertEqual(open_url.call_args.args[0].toString(), 'https://github.com/HwangAA/PDF-Presenter-Tools')
 
     def test_page_number_stays_centered_during_rapid_state_changes(self):
         edit = self.window.edit_page

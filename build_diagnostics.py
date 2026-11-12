@@ -76,6 +76,13 @@ def start_diagnostics(app, window, output, font_ids):
                     finish(False, 'Stop button danger color mismatch: ' + color)
                     return
                 window.grab().save(str(Path(output).with_suffix('.png')))
+                for code, caption in [('en', 'Stop presentation'), ('ja', '発表停止'),
+                                      ('zh_CN', '停止演示'), ('ko', '발표 정지')]:
+                    window.language_actions[code].trigger()
+                    if (window.btn_presentation.text() != caption or window.audience_window.isHidden()
+                            or window.current_page != 0):
+                        finish(False, 'Live language selection failed: ' + code)
+                        return
                 window.stop_presentation()
                 if window.btn_presentation.property('danger'):
                     finish(False, 'Start button still has danger color')
@@ -97,7 +104,7 @@ def start_diagnostics(app, window, output, font_ids):
                 for event_type in (QEvent.KeyPress, QEvent.KeyRelease):
                     app.sendEvent(app.focusWidget(), QKeyEvent(event_type, Qt.Key_Right, Qt.NoModifier))
             else:
-                finish(window.current_page == 1 and window.audience_window.isHidden() and len(font_ids) == 2 and {'Regular', 'SemiBold'}.issubset(set(QFontDatabase().styles('Pretendard'))), 'PDF open, worker rendering, page navigation, bundled fonts, presentation start/stop, stopped navigation, page edit outside click, monitor caption, stop button color, arrow navigation after splitter release, controller DPI reflow')
+                finish(window.current_page == 1 and window.audience_window.isHidden() and len(font_ids) == 2 and {'Regular', 'SemiBold'}.issubset(set(QFontDatabase().styles('Pretendard'))), 'PDF open, worker rendering, page navigation, bundled fonts, presentation start/stop, stopped navigation, page edit outside click, monitor caption, stop button color, arrow navigation after splitter release, controller DPI reflow, four live UI languages')
 
     timer.timeout.connect(tick)
     timer.start(50)

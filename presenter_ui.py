@@ -1,10 +1,11 @@
 """Presentation workspace UI. Rendering and navigation remain in the controller."""
+from presenter_i18n import LANGUAGES
 from pathlib import Path
 import re
-from PyQt5.QtCore import Qt, QEvent, QTimer
+from PyQt5.QtCore import QUrl, Qt, QEvent, QTimer
 from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
-                             QSizePolicy, QMenu, QProgressBar, QSplitter, QSplitterHandle, QLayout)
-from PyQt5.QtGui import QIntValidator, QColor, QPalette, QPainter, QPen
+                             QSizePolicy, QMenu, QProgressBar, QSplitter, QSplitterHandle, QLayout, QActionGroup)
+from PyQt5.QtGui import QDesktopServices, QIntValidator, QColor, QPalette, QPainter, QPen
 
 
 class ResizeHandle(QSplitterHandle):
@@ -200,9 +201,12 @@ def build_ui(window, PageEdit):
         card_layout.setContentsMargins(18, 18, 18, 18)
         card_layout.setSpacing(10)
         row = QHBoxLayout()
-        row.addWidget(label(('●  ' if emphasis else '') + title, 15, '#80CBC4' if emphasis else '#C2CFE1', True))
+        heading = label(title, 15, '#80CBC4' if emphasis else '#C2CFE1', True)
+        setattr(window, key + '_heading', heading)
+        row.addWidget(heading)
         row.addStretch()
         badge = label('CURRENT' if emphasis else 'UP NEXT', 10, '#7890A9', True)
+        setattr(window, key + '_badge', badge)
         row.addWidget(badge)
         card_layout.addLayout(row)
         note = label(detail, 12, '#94A5BA')
@@ -316,16 +320,48 @@ def build_ui(window, PageEdit):
     window.workspace_splitter.splitterMoved.connect(window.refresh_layout)
 
     footer = QHBoxLayout()
-    footer.addWidget(label('← ↑ 이전    → ↓ 다음    ·    번호 입력 후 Enter로 이동', 12, '#8697AE'))
+    window.key_hint = label('', 12, '#8697AE')
+    footer.addWidget(window.key_hint)
     footer.addStretch()
+    window.language_button = QPushButton()
+    window.language_button.setCursor(Qt.PointingHandCursor)
+    window.language_button.setStyleSheet("""
+        QPushButton { background: transparent; color: #9AA8B8; border: 1px solid transparent;
+                      border-radius: 3px; padding: 1px 4px; font-size: 11px; }
+        QPushButton:hover { background: #202D3E; color: #E8EEF7; }
+        QPushButton:focus { border: 1px dashed #B8C9DD; }
+        QPushButton::menu-indicator { image: none; width: 0; }
+    """)
+    window.language_menu = QMenu(window.language_button)
+    window.language_actions = {}
+    language_group = QActionGroup(window.language_menu)
+    language_group.setExclusive(True)
+    for code, endonym in LANGUAGES.items():
+        action = window.language_menu.addAction(endonym)
+        action.setCheckable(True)
+        language_group.addAction(action)
+        action.triggered.connect(lambda checked, code=code: window.select_language(code))
+        window.language_actions[code] = action
+    window.language_button.setMenu(window.language_menu)
     credits = QVBoxLayout()
     credits.setSpacing(2)
     mail = label('개발 & 문의  freeballooning@gmail.com', 12, '#A4B4C9')
     mail.setAlignment(Qt.AlignRight)
+    window.contact_label = mail
     credits.addWidget(mail)
-    window.version_label = label('ver.2.4', 10, '#778499')
-    window.version_label.setAlignment(Qt.AlignRight)
-    credits.addWidget(window.version_label)
+    window.version_label = QPushButton('ver 2.5')
+    window.version_label.setCursor(Qt.PointingHandCursor)
+    window.version_label.setToolTip('GitHub: HwangAA/PDF-Presenter-Tools')
+    window.version_label.setAccessibleName('ver 2.5 · GitHub')
+    window.version_label.setStyleSheet('QPushButton {background: transparent; color: #9AA8B8; font-size: 10px; padding: 1px 2px; border: 1px solid transparent;} QPushButton:hover {color: #D5E7FF;} QPushButton:focus {border: 1px dashed #B8C9DD;}')
+    window.version_label.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://github.com/HwangAA/PDF-Presenter-Tools')))
+    version_row = QHBoxLayout()
+    version_row.setContentsMargins(0, 0, 0, 0)
+    version_row.setSpacing(4)
+    version_row.addStretch()
+    version_row.addWidget(window.language_button, 0, Qt.AlignVCenter)
+    version_row.addWidget(window.version_label, 0, Qt.AlignVCenter)
+    credits.addLayout(version_row)
     footer.addLayout(credits)
     layout.addLayout(footer)
     window.statusBar().setSizeGripEnabled(False)
@@ -334,7 +370,40 @@ def build_ui(window, PageEdit):
     sync_navigation(window)
 
 
+def translate_controls(w):
+    t = w.text_for
+    w.language_button.setText(LANGUAGES[w.language] + ' ▾')
+    w.language_button.setToolTip(t('언어') + ' / Language')
+    w.language_button.setAccessibleName(t('언어') + ': ' + LANGUAGES[w.language])
+    for code, action in w.language_actions.items():
+        action.setChecked(code == w.language)
+    w.current_heading.setText('●  ' + t('현재 화면'))
+    w.next_heading.setText(t('다음 페이지'))
+    w.current_badge.setText(t('CURRENT'))
+    w.next_badge.setText(t('UP NEXT'))
+    w.btn_open.setText(t('PDF 파일 열기'))
+    w.btn_open.setToolTip(t('PDF 파일 열기 · Ctrl+O'))
+    w.btn_prev.setText(t('←  이전'))
+    w.btn_next.setText(t('다음  →'))
+    w.btn_prev.setAccessibleName(t('이전 페이지'))
+    w.btn_next.setAccessibleName(t('다음 페이지'))
+    w.edit_page.setAccessibleName(t('이동할 페이지 번호'))
+    w.edit_page.setToolTip(t('페이지 번호 입력 후 Enter · Esc 또는 여백 클릭으로 취소'))
+    w.lbl_prefix.setText(t('페이지'))
+    w.stage_splitter.setAccessibleName(t('현재 화면과 다음 페이지 비율 조절'))
+    w.workspace_splitter.setAccessibleName(t('슬라이드와 페이지 조작 영역 높이 조절'))
+    for handle in w.findChildren(ResizeHandle):
+        handle.setAccessibleName(t('영역 크기 조절'))
+        handle.setToolTip(t('드래그하여 크기 조절 · 방향키로도 조절할 수 있습니다.'))
+    w.key_hint.setText(t('← ↑ 이전    → ↓ 다음    ·    번호 입력 후 Enter로 이동'))
+    w.contact_label.setText(t('개발 & 문의') + '  freeballooning@gmail.com')
+    if w.pdf_doc is None:
+        w.current_view.setText(t('PDF 파일을 열어 주세요.'))
+        w.file_label.setText(t('발표할 PDF를 열어 주세요'))
+
+
 def sync_navigation(window):
+    t = window.text_for
     loaded = window.pdf_doc is not None
     busy = window.navigation_pending
     target = window.navigation_target if window.navigation_target is not None else window.current_page
@@ -342,8 +411,8 @@ def sync_navigation(window):
     next_available = loaded and target < window.total_pages - 1
     unavailable(window.btn_prev, not prev_available)
     unavailable(window.btn_next, not next_available)
-    window.btn_prev.setToolTip('이전 페이지' if prev_available else '첫 페이지입니다.' if loaded else 'PDF를 열어 주세요.')
-    window.btn_next.setToolTip('다음 페이지' if next_available else '마지막 페이지입니다.' if loaded else 'PDF를 열어 주세요.')
+    window.btn_prev.setToolTip(t('이전 페이지' if prev_available else '첫 페이지입니다.' if loaded else 'PDF를 열어 주세요.'))
+    window.btn_next.setToolTip(t('다음 페이지' if next_available else '마지막 페이지입니다.' if loaded else 'PDF를 열어 주세요.'))
     window.btn_prev.setEnabled(prev_available and not window.opening_pdf)
     window.btn_next.setEnabled(next_available and not window.opening_pdf)
     window.btn_open.setEnabled(not busy)
@@ -354,13 +423,16 @@ def sync_navigation(window):
         window.btn_presentation.style().unpolish(window.btn_presentation)
         window.btn_presentation.style().polish(window.btn_presentation)
         window.btn_presentation.update()
-    window.btn_presentation.setText('발표 정지' if active else '발표 시작')
-    window.btn_presentation.setAccessibleName('프레젠테이션 정지' if active else '프레젠테이션 시작')
-    window.btn_presentation.setToolTip('청중 화면을 숨깁니다. 제어 화면에서는 계속 준비할 수 있습니다.' if active else '현재 페이지부터 청중 화면에 표시합니다.')
+    window.btn_presentation.setText(t('발표 정지' if active else '발표 시작'))
+    window.btn_presentation.setAccessibleName(t('프레젠테이션 정지' if active else '프레젠테이션 시작'))
+    window.btn_presentation.setToolTip(t('청중 화면을 숨깁니다. 제어 화면에서는 계속 준비할 수 있습니다.' if active else '현재 페이지부터 청중 화면에 표시합니다.'))
     window.btn_presentation.setEnabled(active or can_start)
     unavailable(window.btn_presentation, not (active or can_start))
+    remaining = window.total_pages - window.current_page - 1
+    value = f"<span style='color:#80CBC4;'>{remaining}</span>" if loaded else '—'
+    window.lbl_remaining.setText(t('남은 페이지  {value}', value=value))
     state = '발표 중' if window.presentation_active else '발표 대기'
-    window.display_status.setText(f'{state} · {window.screen_summary}')
+    window.display_status.setText(f'{t(state)} · {window.screen_summary}')
     if loaded:
         name = Path(window.pdf_path).name
         metrics = window.file_label.fontMetrics()
@@ -370,14 +442,15 @@ def sync_navigation(window):
 
 
 def sync_screen(window, target, presenter_screen):
+    t = window.text_for
     mode = '전체 화면' if target != presenter_screen else '창 모드'
     chosen = '자동' if window.selected_screen is None else '선택'
-    name = target.name() or '모니터'
-    caption = f'발표 모니터: {name}'
+    name = target.name() or t('모니터')
+    caption = t('발표 모니터: {name}', name=name)
     # QPushButton treats ampersands as shortcut markers; keep monitor names literal.
     window.screen_button.setText(caption.replace('&', '&&') + '  ▾')
     window.screen_button.setAccessibleName(caption)
-    window.screen_button.setToolTip(f'{caption} ({chosen} 선택)\n청중에게 표시할 모니터를 선택합니다.')
-    window.screen_summary = f'{chosen} · {name} · {mode}'
+    window.screen_button.setToolTip(f"{caption} ({t(chosen)})\n" + t('청중에게 표시할 모니터를 선택합니다.'))
+    window.screen_summary = f'{t(chosen)} · {name} · {t(mode)}'
     sync_navigation(window)
-    window.display_status.setToolTip('다른 모니터: 전체 화면 / 같은 모니터: 창 모드')
+    window.display_status.setToolTip(t('다른 모니터: 전체 화면 / 같은 모니터: 창 모드'))

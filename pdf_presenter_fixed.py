@@ -1,4 +1,5 @@
 import sys
+from presenter_i18n import LANGUAGES, translate, system_language
 import os
 import pymupdf as fitz
 import logging
@@ -321,6 +322,9 @@ class AudienceWindow(QMainWindow):
 class PresenterWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.language = system_language()
+        self._note = ('', {})
+        self._status = None
         self.setWindowTitle("PDF 발표자 도구")
         self.pdf_doc = None
         self.resize(1100, 750)
@@ -374,6 +378,7 @@ class PresenterWindow(QMainWindow):
         self.audience_window.stop_requested.connect(self.stop_presentation)
 
         self.initUI()
+        self.apply_language()
         self.setup_shortcuts()
         app = QApplication.instance()
         app.screenAdded.connect(self.screen_configuration_changed)
@@ -382,6 +387,44 @@ class PresenterWindow(QMainWindow):
         QTimer.singleShot(0, self.refresh_screens)
         
         QApplication.instance().installEventFilter(self)
+
+    def text_for(self, key, **values):
+        return translate(self.language, key, **values)
+
+    def select_language(self, code):
+        if code not in LANGUAGES or code == self.language:
+            return
+        self.language = code
+        self.apply_language()
+
+    def apply_language(self):
+        from presenter_ui import translate_controls, sync_screen
+        translate_controls(self)
+        self.setWindowTitle(self.text_for('PDF 발표자 도구') + (' - ' + os.path.basename(self.pdf_path) if self.pdf_path else ''))
+        self.audience_window.setWindowTitle(self.text_for('오디언스 뷰 (청중 화면)'))
+        if hasattr(self, 'screen_actions') and self.screen_actions.actions():
+            self.screen_actions.actions()[0].setText(self.text_for('자동 선택 (발표자 화면과 다른 모니터)'))
+        presenter, target = self.resolve_screens()
+        if target is not None:
+            sync_screen(self, target, presenter)
+        self.set_note(*self._note)
+        if self._status and self.statusBar().currentMessage():
+            key, values, until = self._status
+            if until is None or until > time.monotonic():
+                self.set_status(key, values, 0 if until is None else max(1, round((until-time.monotonic())*1000)))
+        self.refresh_layout()
+
+    def set_note(self, key='', values=None):
+        self._note = (key, values or {})
+        self.preview_note.setText(self.text_for(key, **self._note[1]))
+
+    def set_status(self, key, values=None, timeout=0):
+        values = values or {}
+        self._status = (key, values, time.monotonic()+timeout/1000 if timeout else None)
+        localized = dict(values)
+        if 'error' in localized:
+            localized['error'] = self.text_for(str(localized['error']))
+        self.statusBar().showMessage(self.text_for(key, **localized), timeout)
 
     def initUI(self):
         from presenter_ui import build_ui
@@ -441,9 +484,9 @@ class PresenterWindow(QMainWindow):
         for sc in self.shortcuts:
             sc.setEnabled(True)
 
-    def show_error(self, message):
-        logger.error(message)
-        self.statusBar().showMessage(message, 10000)
+    def show_error(self, message, **values):
+        logger.error('%s', self.text_for(message, **values))
+        self.set_status(message, values, 10000)
 
     def next_page(self):
         page = self.navigation_target if self.navigation_target is not None else self.current_page
@@ -528,7 +571,7 @@ class PresenterWindow(QMainWindow):
         if hasattr(self, 'screen_actions'):
             self.screen_actions.deleteLater()
         self.screen_actions = QActionGroup(self)
-        automatic = QAction("자동 선택 (발표자 화면과 다른 모니터)", self.screen_menu)
+        automatic = QAction(self.text_for("자동 선택 (발표자 화면과 다른 모니터)"), self.screen_menu)
         automatic.setCheckable(True)
         automatic.setChecked(self.selected_screen is None)
         automatic.setIcon(selection_icon(self.selected_screen is None))
@@ -633,13 +676,13 @@ class PresenterWindow(QMainWindow):
             self.screen_hooked = True
 
     def open_pdf_dialog(self):
-        file_name, _ = QFileDialog.getOpenFileName(self, "PDF 파일 열기", "", "PDF Files (*.pdf)")
+        file_name, _ = QFileDialog.getOpenFileName(self, self.text_for("PDF 파일 열기"), "", self.text_for("PDF 파일 (*.pdf)"))
         if file_name:
             self.load_pdf(file_name)
 
     def load_pdf(self, file_path):
         if self.navigation_pending:
-            self.statusBar().showMessage("페이지를 준비 중입니다. 잠시 후 다시 시도해 주세요.", 3000)
+            self.set_status("페이지를 준비 중입니다. 잠시 후 다시 시도해 주세요.", timeout=3000)
             return
         candidate = None
         try:
@@ -661,7 +704,7 @@ class PresenterWindow(QMainWindow):
             if candidate is not None:
                 self.document_tokens.pop(id(candidate), None)
                 candidate.close()
-            self.show_error(f"파일을 열 수 없습니다: {exc}")
+            self.show_error("파일을 열 수 없습니다: {error}", error=str(exc))
 
     def render_size(self):
         _, screen = self.resolve_screens()
@@ -706,7 +749,7 @@ class PresenterWindow(QMainWindow):
                 self.navigation_target = page
             self.navigation_pending = True
             self.edit_page.setEnabled(False)
-            self.statusBar().showMessage("페이지를 준비하고 있습니다…")
+            self.set_status("페이지를 준비하고 있습니다…")
             self.sync_ui()
 
     def navigate_to(self, page, force=False):
@@ -734,7 +777,7 @@ class PresenterWindow(QMainWindow):
             if doc is self.pdf_doc and target == page and pending_size == size:
                 self.jobs[job_id] = (doc, path, target, 'navigate', pending_size)
         self.edit_page.setEnabled(False)
-        self.statusBar().showMessage(f'{page + 1}페이지를 준비하고 있습니다…')
+        self.set_status('{page}페이지를 준비하고 있습니다…', {'page': page + 1})
         self.sync_ui()
         # At most one speculative render exists; foreground work is next.
         if self.jobs:
@@ -747,7 +790,7 @@ class PresenterWindow(QMainWindow):
             self.force_navigation = False
             self.edit_page.setEnabled(True)
             self.sync_ui()
-            self.show_error(f"페이지를 표시할 수 없습니다: {exc}")
+            self.show_error("페이지를 표시할 수 없습니다: {error}", error=str(exc))
 
     def prefetch_pages(self):
         offsets = [0, 1, -1, 2, -2, 3, -3] + list(range(4, 11))
@@ -786,7 +829,7 @@ class PresenterWindow(QMainWindow):
             try:
                 self.request_render(self.pdf_doc, self.pdf_path, page, 'preview')
             except Exception as exc:
-                self.preview_note.setText("미리보기를 표시할 수 없습니다.")
+                self.set_note("미리보기를 표시할 수 없습니다.")
                 logger.error("Prefetch scheduling failed: %s", exc)
             return
 
@@ -797,7 +840,7 @@ class PresenterWindow(QMainWindow):
             except queue.Empty:
                 break
             except (EOFError, OSError, ValueError) as exc:
-                self.fail_pending_renders(f"PDF 처리 통신 오류: {exc}. 다시 시도해 주세요.")
+                self.fail_pending_renders("PDF 처리 통신 오류: {error}. 다시 시도해 주세요.", error=str(exc))
                 return
             job = self.jobs.pop(job_id, None)
             if job is not None:
@@ -811,7 +854,7 @@ class PresenterWindow(QMainWindow):
             self.drive_navigation()
             self.schedule_prefetch()
 
-    def fail_pending_renders(self, message):
+    def fail_pending_renders(self, message, **values):
         pending = list(self.jobs.values())
         self.jobs.clear()
         self.stop_worker()
@@ -820,11 +863,11 @@ class PresenterWindow(QMainWindow):
         self.force_navigation = False
         self.opening_pdf = False
         for job in pending:
-            self.finish_render(job, None, message)
+            self.finish_render(job, None, self.text_for(message, **values))
         self.edit_page.setEnabled(self.pdf_doc is not None)
         self.restore_page_text()
         self.sync_ui()
-        self.show_error(message)
+        self.show_error(message, **values)
 
     def finish_render(self, job, payload, error):
         doc, path, page, kind, size = job
@@ -856,7 +899,7 @@ class PresenterWindow(QMainWindow):
                     self.preview_message = "미리보기를 표시할 수 없습니다."
                     self.cached_next_pixmap = None
                     self.displayed_preview_page = None
-                    self.preview_note.clear()
+                    self.set_note()
                     self.refresh_layout()
                 logger.error("Preview rendering failed: %s", error)
             else:
@@ -865,7 +908,7 @@ class PresenterWindow(QMainWindow):
                     self.navigation_pending = False
                     self.force_navigation = False
                 self.restore_page_text()
-                self.show_error(f"페이지를 표시할 수 없습니다: {error}")
+                self.show_error("페이지를 표시할 수 없습니다: {error}", error=str(error))
             self.edit_page.setEnabled(self.pdf_doc is not None and not self.navigation_pending)
             self.sync_ui()
             return
@@ -886,19 +929,12 @@ class PresenterWindow(QMainWindow):
             self.displayed_preview_page = None
             self.edit_page.validator().setRange(1, self.total_pages)
             self.edit_page.setEnabled(True)
-            self.setWindowTitle(f"PDF 발표자 도구 - {os.path.basename(path)}")
+            self.setWindowTitle(self.text_for("PDF 발표자 도구") + " - " + os.path.basename(path))
             if old_doc is not None:
                 self.document_tokens.pop(id(old_doc), None)
                 old_doc.close()
         self.cache_page(page, size, pixmap)
-        if kind == 'preview':
-            self.trim_cache()
-            if page == self.current_page + 1 and size == self.render_size():
-                self.cached_next_pixmap = pixmap
-                self.displayed_preview_page = page
-                self.preview_note.clear()
-                self.refresh_layout()
-        elif kind == 'open' or (page == self.navigation_target and size == self.render_size()):
+        if kind == 'open' or (kind == 'navigate' and page == self.navigation_target and size == self.render_size()):
             self.navigation_pending = False
             self.navigation_target = None
             self.force_navigation = False
@@ -908,8 +944,14 @@ class PresenterWindow(QMainWindow):
             if needs_resize:
                 self.navigate_to(page)
         else:
-            # Obsolete foreground results can warm the cache, never move the display.
+            # A superseded navigation may now be the next preview. Consume it
+            # without committing a page or resetting the newer navigation target.
             self.trim_cache()
+            if page == self.current_page + 1 and size == self.render_size():
+                self.cached_next_pixmap = pixmap
+                self.displayed_preview_page = page
+                self.set_note()
+                self.refresh_layout()
         self.drive_navigation()
 
     def commit_page(self, page, pixmap, prefetch=True):
@@ -922,21 +964,21 @@ class PresenterWindow(QMainWindow):
         self.restore_page_text()
         self.lbl_suffix.setText(f"/ {self.total_pages}")
         remaining = self.total_pages - page - 1
-        self.lbl_remaining.setText(f"남은 페이지  <span style='color:#80CBC4;'>{remaining}</span>")
         self.statusBar().clearMessage()
         self.sync_ui()
         ready_preview = self.page_cache.get((page + 1, self.render_size()))
         if ready_preview is not None or not remaining:
             self.cached_next_pixmap = ready_preview if remaining else None
             self.displayed_preview_page = page + 1 if remaining else None
-            self.preview_note.clear()
+            self.set_note()
         else:
             # Keep the old image on screen until the replacement is complete.
             # Put progress outside the image so there is no blank/text flash.
-            note = f"{page + 2}페이지 준비 중"
-            if self.displayed_preview_page is not None:
-                note += f" · {self.displayed_preview_page + 1}페이지 표시 중"
-            self.preview_note.setText(note)
+            if self.displayed_preview_page is None:
+                self.set_note('{page}페이지 준비 중', {'page': page + 2})
+            else:
+                self.set_note('{page}페이지 준비 중 · {shown}페이지 표시 중',
+                              {'page': page + 2, 'shown': self.displayed_preview_page + 1})
         self.preview_message = "마지막 페이지입니다." if remaining == 0 else "미리보기를 준비하고 있습니다…"
         self.refresh_layout()
         if prefetch:
@@ -969,12 +1011,12 @@ class PresenterWindow(QMainWindow):
             self.next_view.setPixmap(fit_label(self.cached_next_pixmap, self.next_view))
         elif not self.cached_next_pixmap:
             self.next_view.clear()
-            self.next_view.setText(self.preview_message)
+            self.next_view.setText(self.text_for(self.preview_message))
         stale = (self.pdf_doc is not None and self.current_page + 1 < self.total_pages
                  and self.cached_next_pixmap is not None
                  and self.displayed_preview_page != self.current_page + 1)
         self.preview_overlay.setGeometry(self.next_view.rect())
-        self.preview_overlay.setText(f"{self.current_page + 2}페이지 준비 중")
+        self.preview_overlay.setText(self.text_for("{page}페이지 준비 중", page=self.current_page + 2))
         self.preview_overlay.setVisible(stale)
         if stale:
             self.preview_overlay.raise_()
@@ -1027,6 +1069,12 @@ class PresenterWindow(QMainWindow):
         self.audience_window.close()
         event.accept()
 
+def apply_session_theme(app, font_family, resource_dir):
+    from qt_material import apply_stylesheet
+    apply_stylesheet(app, theme='dark_teal.xml', parent=str(Path(resource_dir).resolve()),
+                     extra={'font_family': font_family, 'font_size': '16px'})
+
+
 if __name__ == '__main__':
     mp.freeze_support()
     diagnostic = len(sys.argv) == 3 and sys.argv[1] == '--self-test'
@@ -1037,23 +1085,20 @@ if __name__ == '__main__':
     font_family = ui_font_family()
     app.setFont(QFont(font_family, 12))
     
-    from qt_material import apply_stylesheet
-    
-    extra_settings = {
-        'font_family': font_family,
-        'font_size': '16px',
-    }
-    
-    apply_stylesheet(app, theme='dark_teal.xml', extra=extra_settings)
-    
-    presenter = PresenterWindow()
-    presenter.show()
-    if diagnostic:
-        from build_diagnostics import start_diagnostics
-        start_diagnostics(app, presenter, sys.argv[2], _bundled_font_ids)
-    exit_code = app.exec_()
-    # Release widgets while QApplication and its registered fonts still exist.
-    from PyQt5 import sip
-    sip.delete(presenter.audience_window)
-    sip.delete(presenter)
+    from tempfile import TemporaryDirectory
+    # Each instance owns its generated icons; never write to the user's theme cache.
+    with TemporaryDirectory(prefix='pdf-theme-', dir=getattr(sys, '_MEIPASS', None)) as theme_dir:
+        apply_session_theme(app, font_family, theme_dir)
+        presenter = PresenterWindow()
+        if diagnostic:
+            presenter.select_language('ko')  # Existing diagnostic assertions start in Korean.
+        presenter.show()
+        if diagnostic:
+            from build_diagnostics import start_diagnostics
+            start_diagnostics(app, presenter, sys.argv[2], _bundled_font_ids)
+        exit_code = app.exec_()
+        # Release widgets while QApplication and its registered fonts still exist.
+        from PyQt5 import sip
+        sip.delete(presenter.audience_window)
+        sip.delete(presenter)
     sys.exit(exit_code)
